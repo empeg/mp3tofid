@@ -106,10 +106,11 @@ batch to see if everything works.
 -2: percentage of FID's to put on second drive. Default is 50<br>
 -b: compensate a broken second drive. skip all tunes on this drive<br>
 -s: spread playlists across both drives. by default, all playlists go in /drive0/fids<br>
--d: debug option. Default  "sm"<br>
+-d: debug option. Default  "sSm"<br>
 <p>
 debug options:<br>
 s: show stages of program<br>
+S: show statistics<br>
 r: show fids being removed<br>
 d: show directories being scanned<br>
 m: show MP3's being scanned<br>
@@ -134,7 +135,7 @@ libid3tag is written in C rather than C++ and is included with libmad.
 <li>MP3 scanning could be much faster, probably
 <li>there's no man page
 <li>your MP3 files need to be in a single, preferably dedicated, filesystem
-<li>your inode numbers need to be allocated from zero up (this rules out a cygwin port, for now)
+<li>your inode numbers may be too high resulting in a too large database
 <li>no checking for tags that are too long or contain newlines
 <li>your player may crash when told by emplode to rebuild the database
 

@@ -1,4 +1,4 @@
-CFLAGS = -O2
+CFLAGS = -O2 -I /usr/local/include
 
 # Theses options are used by the author during development. Comment
 # them if you're not using gcc.
@@ -7,14 +7,14 @@ CFLAGS += \
 -Wpointer-arith 	\
 -Wbad-function-cast 	\
 -Wcast-align 		\
--Wconversion		\
--Wnested-externs
+-Wnested-externs	\
+#-Wconversion		\
 #-pedantic		\
 #-Wcast-qual 		\
 
 PROGNAME = mp3tofid
 LDLIBS   = -lmad -lid3tag -lz
-LDFLAGS  = -s
+LDFLAGS  = -s -L/usr/local/lib
 OBJECTS  = $(PROGNAME).o scanid3.o scanmp3.o
 BINDIR   = /usr/local/bin
 

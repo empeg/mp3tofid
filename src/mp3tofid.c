@@ -2,11 +2,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
-#include <error.h>
+#include <limits.h>
+#include <err.h>
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <time.h>
 #include <utime.h>
 
 #include "version.h"
@@ -25,7 +27,7 @@ struct progopts
 	int		intellisort;	/* sort "intelligently" */
 	int		ignorecase;	/* ignore case in directory sorts */
 	int		spreadplaylists;/* spread playlists over both drives */
-} progopts = {NULL, NULL, NULL, 50, "sm", 0, 0, 0, 0};
+} progopts = {NULL, NULL, NULL, 50, "sSm", 0, 0, 0, 0};
 
 /* data structure related globals */
 struct fidinfo	*fihead;		/* head of linked list */
@@ -186,7 +188,7 @@ mkfidsubdir(char *subdir)
 	char fidsubdir[PATH_MAX];
 
 	sprintf(fidsubdir, "%s/%s", progopts.fiddir, subdir);
-	if ((mkdir(fidsubdir, 0777) < 0) && (errno != EEXIST))
+	if ((mkdir(fidsubdir, (mode_t) 0777) < 0) && (errno != EEXIST))
 	{
 		fprintf(stderr, "%s: can not create directory '%s': %s\n",
 				progopts.progname, fidsubdir, strerror(errno));
@@ -302,7 +304,7 @@ mp3scan(char *mp3path, struct stat *statbuf, unsigned int fidnumber)
 	tagvalues[TAG_LOADFROM_NUM] = mp3path;
 	sprintf(tagvalue, "%lu", statbuf->st_ctime);
 	tagvalues[TAG_CTIME_NUM]    = strdup(tagvalue);
-	sprintf(tagvalue, "%lu", statbuf->st_size);
+	sprintf(tagvalue, "%lu", (unsigned long) statbuf->st_size);
 	tagvalues[TAG_LENGTH_NUM]   = strdup(tagvalue);
 
 	fidinfo->fidnumber   = fidnumber;
@@ -655,7 +657,7 @@ loadfids()
 	struct fidinfo	*fidinfo;
 
 	if (strchr(progopts.debugoptions, 's'))
-		puts("loading existings fids");
+		puts("reading existings fids");
 
 	for (i=0; i<2; i++)
 	{
@@ -733,6 +735,7 @@ usage(int exitstatus)
 	fprintf(fp, "\t\t-d: debug options\n");
 	fprintf(fp, "\tdebug options:\n");
 	fprintf(fp, "\t\ts: show stages of program\n");
+	fprintf(fp, "\t\tS: show statistics\n");
 	fprintf(fp, "\t\tr: show fids being removed\n");
 	fprintf(fp, "\t\td: show directories being scanned\n");
 	fprintf(fp, "\t\tm: show MP3's being scanned\n");
@@ -745,12 +748,14 @@ void
 mkfidsubdirs()
 {
 	if (strchr(progopts.debugoptions, 's'))
-		puts("creating subdirectories");
+		puts("creating directories");
 	mkfidsubdir("drive0");
 	mkfidsubdir("drive0/fids");
+	mkfidsubdir("drive0/lost+found");
 	mkfidsubdir("drive0/var");
 	mkfidsubdir("drive1");
 	mkfidsubdir("drive1/fids");
+	mkfidsubdir("drive1/lost+found");
 }
 
 /* comparison routine for use with qsort(3) */
@@ -779,11 +784,16 @@ savefids()
 	int		i, j;
 	int		lastfidnumber = 0;
 	unsigned int	nfids = 0;
+	unsigned int	emptyfids = 0;
+	unsigned int	tunefids = 0;
+	unsigned int	playlistfids = 0;
 	struct fidinfo	*fidinfo;
 	struct fidinfo	**fidinfoarray;
 	struct utimbuf	utimbuf;
+	struct stat	statbuf;
 	FID		fid;
-	FILE		*fp;
+	FILE		*fptags;
+	FILE		*fpfids;
 	FILE		*fpdatabase;
 	FILE		*fpplaylists;
 	char		path[PATH_MAX];
@@ -791,7 +801,7 @@ savefids()
 
 	/* show what's going on */
 	if (strchr(progopts.debugoptions, 's'))
-		puts("saving data");
+		puts("writing fids and databases");
 
 	/* open database files */
 	sprintf(path, "%s/drive0/var/database",  progopts.fiddir);
@@ -799,12 +809,12 @@ savefids()
 	sprintf(path, "%s/drive0/var/playlists", progopts.fiddir);
 	fpplaylists = efopen(path, "w");
 	sprintf(path, "%s/drive0/var/tags",      progopts.fiddir);
-	fp          = efopen(path, "w");
+	fptags      = efopen(path, "w");
 
 	/* write tags file */
 	for (i=0; i<MAXTAGS; i++)
-		fprintf(fp, "%s\n", tagprops[i].name ? tagprops[i].name : "");
-	fclose(fp);
+		fprintf(fptags, "%s\n", tagprops[i].name ? tagprops[i].name : "");
+	fclose(fptags);
 
 	/* count fids */
 	for (fidinfo = fihead; fidinfo && fidinfo->ntagvalues; fidinfo = fidinfo->next)
@@ -831,15 +841,15 @@ savefids()
 		if (fidinfo->tagtype == TAG_TYPE_PLAYLIST)
 		{
 			/* create the playlist "tune" fid */
-			fp = efopen(fidpath, "w");
+			fpfids = efopen(fidpath, "w");
 			for (j=0; j<fidinfo->pllength; j++)
 			{
 				fid = fidinfo->playlist[j];
-				fwrite(&fid, sizeof(fid), 1, fp);
+				fwrite(&fid, sizeof(fid), 1, fpfids);
 				fwrite(&fid, sizeof(fid), 1, fpplaylists);
 			}
-			fclose(fp);
-
+			fclose(fpfids);
+			playlistfids++;
 		}
 		else if (fidinfo->tagtype == TAG_TYPE_TUNE)
 		{
@@ -848,6 +858,7 @@ savefids()
 				fprintf(stderr, "%s: cannot symlink '%s' to '%s': %s\n",
 						progopts.progname, fidinfo->tagvalues[TAG_LOADFROM_NUM],
 						fidpath, strerror(errno));
+			tunefids++;
 		}
 
 		/* create the tag fid */
@@ -856,12 +867,12 @@ savefids()
 		{
 			fidpath = fidnumbertofidpath(fidinfo->fidnumber, FIDTYPE_TAGS,
 					fidinfo->tagtype);
-			fp = efopen(fidpath, "w");
+			fpfids = efopen(fidpath, "w");
 			for (j=0; j<fidinfo->ntagvalues; j++)
 				if (fidinfo->tagvalues[j])
-					fprintf(fp, "%s=%s\n", tagprops[j].name,
+					fprintf(fpfids, "%s=%s\n", tagprops[j].name,
 							fidinfo->tagvalues[j]);
-			fclose(fp);
+			fclose(fpfids);
 		}
 
 		/* set the tag fid's mtime; makes things easy for rsync and ourselves */
@@ -874,7 +885,10 @@ savefids()
 
 		/* fill up empty database entries */
 		for (j=lastfidnumber; j<fidinfo->fidnumber; j++)
+		{
 			fputc(0xff, fpdatabase);
+			emptyfids++;
+		}
 
 		/* append entry to database */
 		for (j=0; j<fidinfo->ntagvalues; j++)
@@ -888,6 +902,24 @@ savefids()
 		fputc(0xff, fpdatabase);
 
 		lastfidnumber = fidinfo->fidnumber + 1;
+	}
+
+	/* display statistics */
+	if (strchr(progopts.debugoptions, 'S'))
+	{
+		fstat(fileno(fpdatabase), &statbuf);
+
+		puts("database statistics:");
+		printf("\tdatabase size is %lu bytes, containing:\n",
+			(unsigned long) statbuf.st_size);
+		/* printf("%10u real fids\n",   nfids); */
+		printf("\t%10u tunes\n",       tunefids);
+		printf("\t%10u playlists\n",   playlistfids);
+		printf("\t%10u empty fids\n",  emptyfids + 1);
+		printf("\tdatabase size efficiency is %3.1f%%\n",
+			100.0 * statbuf.st_size / (statbuf.st_size + emptyfids + 1));
+		printf("\tdatabase fids efficiency is %3.1f%%\n",
+			100.0 * nfids / (nfids + emptyfids + 1));
 	}
 
 	/* close database files */

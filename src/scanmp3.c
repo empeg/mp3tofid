@@ -7,6 +7,7 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/types.h>
+#include <time.h>
 #include <mad.h>
 
 #include "fids.h"

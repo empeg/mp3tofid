@@ -6,6 +6,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <id3tag.h>
 
 #include "fids.h"
@@ -43,11 +44,9 @@ getid3info(struct fidinfo *fidinfo)
 
 	if ((id3tag = id3_file_tag(id3file)) != NULL)
 	{
-
-		for (i = 0; i < sizeof(info) / sizeof(info[0]); ++i)
+		for (i = 0; i < sizeof(info) / sizeof(info[0]); i++)
 		{
-			id3frame = id3_tag_findframe(id3tag, info[i].id, 0);
-			if (id3frame == 0)
+			if ((id3frame = id3_tag_findframe(id3tag, info[i].id, 0)) == NULL)
 				continue;
 
 			if (strcmp(info[i].id, ID3_FRAME_COMMENT) == 0)
@@ -55,12 +54,11 @@ getid3info(struct fidinfo *fidinfo)
 			else
 			{
 				id3ucs4 = id3_field_getstrings(&id3frame->fields[1], 0);
-
-				if (strcmp(info[i].id, ID3_FRAME_GENRE) == 0)
+				if (id3ucs4 && (strcmp(info[i].id, ID3_FRAME_GENRE) == 0))
 					id3ucs4 = id3_genre_name(id3ucs4);
 			}
 
-			if ((latin1 = id3_ucs4_latin1duplicate(id3ucs4)) != NULL)
+			if (id3ucs4 && (latin1 = id3_ucs4_latin1duplicate(id3ucs4)))
 				fidinfo->tagvalues[info[i].tagidx] = latin1;
 		}
 	}
