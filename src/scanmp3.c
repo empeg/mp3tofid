@@ -1,7 +1,16 @@
+/*
+ * get mp3 properties from a file using libmad
+ * inspired by madlld
+ */
+
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <sys/types.h>
 #include <mad.h>
+
+#include "fids.h"
+#include "mp3tofid.h"
 
 #define INPUT_BUFFER_SIZE	(5*8192)
 
@@ -31,7 +40,7 @@ const char
 }
 
 void
-writemp3info(FILE *fpinfo, char *path)
+getmp3info(struct fidinfo *fidinfo)
 {
 	struct mad_stream	Stream;
 	struct mad_header	Header;
@@ -43,13 +52,15 @@ writemp3info(FILE *fpinfo, char *path)
 	unsigned long		Bitrate = 0;
 	unsigned long		TotalBitrate = 0;
 	unsigned long		Offset = 0;
-	FILE			*fpmp3;
+	FILE			*fp;
+	char			tagvalue[256];
 
 	/* open the MP3 file */
-	if ((fpmp3 = fopen(path, "r")) == NULL)
+	if ((fp = fopen(fidinfo->tagvalues[TAG_LOADFROM_NUM], "r")) == NULL)
 	{
 		fprintf(stderr, "can not open '%s': %s\n",
-				path, strerror(errno));
+				fidinfo->tagvalues[TAG_LOADFROM_NUM],
+				strerror(errno));
 		return;
 	}
 
@@ -82,13 +93,14 @@ writemp3info(FILE *fpinfo, char *path)
 				Remaining = 0;
 			}
 			
-			ReadSize = fread(ReadStart, 1, ReadSize, fpmp3);
+			ReadSize = fread(ReadStart, 1, ReadSize, fp);
 			if(ReadSize <= 0)
 			{
-				if(ferror(fpmp3))
+				if(ferror(fp))
 				{
 					fprintf(stderr, "read error on '%s': %s\n",
-						path, strerror(errno));
+						fidinfo->tagvalues[TAG_LOADFROM_NUM],
+						strerror(errno));
 					Status = 1;
 				}
 				break;
@@ -108,8 +120,10 @@ writemp3info(FILE *fpinfo, char *path)
 					continue;
 				else
 				{
-					fprintf(stderr, "'%s': unrecoverable frame level error (%s).\n",
-						path, mad_stream_errorstr(&Stream));
+					fprintf(stderr,
+						"'%s': unrecoverable frame level error (%s).\n",
+						fidinfo->tagvalues[TAG_LOADFROM_NUM],
+						mad_stream_errorstr(&Stream));
 					Status = 1;
 					break;
 				}
@@ -126,25 +140,36 @@ writemp3info(FILE *fpinfo, char *path)
 		FrameCount++;
 	}
 
-	/* Accounting report if no error occured. */
+	/* add tags if no error occurred */
 	if(!Status)
 	{
-/*
-		fprintf(fpinfo, "frames=%lu\n", FrameCount);
-*/
-		fprintf(fpinfo, "bitrate=%s%s%lu\n",
-					BitrateChanges ? "v" : "f",
-					GetAudioMode(&Header),
-					TotalBitrate / FrameCount);
-		fprintf(fpinfo, "duration=%lu\n",
+		/* frames */
+		sprintf(tagvalue, "%lu", FrameCount);
+		fidinfo->tagvalues[TAG_FRAMES_NUM] = strdup(tagvalue);
+
+		/* bitrate */
+		sprintf(tagvalue, "%s%s%lu",
+				BitrateChanges ? "v" : "f",
+				GetAudioMode(&Header),
+				TotalBitrate / FrameCount);
+		fidinfo->tagvalues[TAG_BITRATE_NUM] = strdup(tagvalue);
+
+		/* duration */
+		sprintf(tagvalue, "%lu",
 				mad_timer_count(Timer, MAD_UNITS_MILLISECONDS));
-		fprintf(fpinfo, "offset=%lu\n", Offset);
-		fprintf(fpinfo, "samplerate=%u\n", Header.samplerate);
+		fidinfo->tagvalues[TAG_DURATION_NUM] = strdup(tagvalue);
+
+		/* offset */
+		sprintf(tagvalue, "%lu", Offset);
+		fidinfo->tagvalues[TAG_OFFSET_NUM] = strdup(tagvalue);
+
+		/* samplerate */
+		sprintf(tagvalue, "%u", Header.samplerate);
+		fidinfo->tagvalues[TAG_SAMPLERATE_NUM] = strdup(tagvalue);
 	}
 
 	mad_header_finish(&Header);
 	mad_stream_finish(&Stream);
 
-	fclose(fpmp3);
-
+	fclose(fp);
 }
