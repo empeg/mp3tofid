@@ -13,7 +13,7 @@ CFLAGS += \
 #-Wcast-qual 		\
 
 PROGNAME = mp3tofid
-LDLIBS   = -lmad -lid3tag -lz
+LDLIBS   = -lmad -lid3tag -lz -lgdbm
 LDFLAGS  = -s -L/usr/local/lib
 OBJECTS  = $(PROGNAME).o scanid3.o scanmp3.o
 BINDIR   = /usr/local/bin
@@ -28,7 +28,7 @@ scanid3.o: scanid3.c mp3tofid.h fids.h
 scanmp3.o: scanmp3.c mp3tofid.h fids.h
 
 clean:
-	rm -f *~ $(PROGNAME) *.o core
+	rm -f *~ $(PROGNAME) *.o core *.exe *.stackdump
 	chmod 644 *.c *.h
 
 install: $(PROGNAME)

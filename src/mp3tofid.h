@@ -1,6 +1,15 @@
 #define	NTAGS		17	/* number of known tags */
 #define	MAXTAGS		256	/* maximum number of tags */
 #define	MAXTAGLEN	255	/* maximum length of a tag value */
+#define	MAXFIDNUM	131072	/* maximum number of fids */
+
+#define DEBUG_SCANDIR		0001
+#define DEBUG_INODEDB		0002
+#define DEBUG_SCANMP3		0004
+#define DEBUG_SKIPMP3		0010
+#define DEBUG_REMOVEFID		0020
+#define DEBUG_STAGES		0040
+#define DEBUG_STATISTICS	0100
 
 #define	TAG_TYPE_NUM		0
 #define	TAG_ARTIST_NUM		1

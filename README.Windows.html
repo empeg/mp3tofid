@@ -1,0 +1,73 @@
+<html>
+<head>
+<title>
+mp3tofid for Windows README
+</title>
+</head>
+<body>
+<font face="Verdana,Arial,Helvetica" size=2>
+<h2>mp3tofid for Windows README</h2>
+This file contains some extra information needed to run mp3tofid
+on Windows. Read the main <a href="README.html">README.html</a>
+as well.
+<p>
+mp3tofid was written for Unix API's and thus does not port
+directly to Windows. Instead it is now ported to run inside
+<a href="http://www.cygwin.com/">Cygwin</a>.
+Cygwin is two things: a single dll that emulates a Unix environment
+on a Windows machine, and a complete set of tools, applications and
+compilers, very similar to what a Unix user would expect on a Unix
+box.
+mp3tofid needs this dll, and you will the cygwin tools as well, as
+rsync is one of them. Download at least the base tools, rsync and
+cygrunsrv, which allows rsync to run as an NT service.
+<p>
+I have only tested this software on my XP box. It will very likely
+run on 2000 and NT as well, but on 95/98/ME you will at least have
+the problem of not being able to run rsync as a service.
+<p>
+There's no support for tracking Windows shortcuts inside the MP3
+tree like there is for tracking symlinks on Unix. Hopefully, I
+will add this in a future release once I have figured out how
+to read shortcuts using the cygwin API.
+<p>
+Here's how I use mp3tofid for cygwin and rsync:<br>
+My MP3's live in E:\mp3.<br>
+My FID tree is in E:\empegfids.<br>
+I have copied mp3tofid.exe to /usr/local/bin
+(typically "C:\Program Files\cygwin\usr\local\bin")<br>
+I convert my MP3 tree using
+<pre>
+mp3tofid -Ii /cygdrive/e/mp3 /cygdrive/e/empegfids
+</pre>
+The target directory must exist.
+<p>
+I use my XP box as an rsync server, and my empeg as an rsync
+client. Here's how I set up my /etc/rsyncd.conf file:
+<pre>
+[empegfids]
+path = /cygdrive/e/empegfids
+read only = yes
+hosts allow = myempeg.mydomain.com
+use chroot = no
+</pre>
+The command to use on the player is the same as when using a Unix
+rsync server. See the main <a href="README.html">README.html</a>.
+<p>
+Included in this distribution, you'll find "instsrv.sh", a script
+that will install rsync as an NT service.
+<h3>Editors</h3>
+Don't use notepad or wordpad to edit Unix scripts and configuration
+files. notepad does not handle Unix newline termination at all, and
+wordpad will screw it up when you change something. You will need an
+editor that detects and preserves Unix/Windows/Mac line terminations.
+<p>
+Personally, I use <a href="http://www.vim.org">vim</a>, which comes
+with cygwin (or as a native GUI app) but vim is not for everyone,
+as it is very unintuitive for Windows users. Try something like
+<a href="http://www.sourceedit.com/">SourceEdit</a> which is completely
+free or one of the numerous shareware tools in this genre.
+
+</font>
+</body>
+</html>

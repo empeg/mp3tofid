@@ -3,17 +3,23 @@
 #include <string.h>
 #include <dirent.h>
 #include <limits.h>
-#include <err.h>
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <time.h>
 #include <utime.h>
+#include <gdbm.h>
 
 #include "version.h"
 #include "fids.h"
 #include "mp3tofid.h"
+
+#ifdef	__CYGWIN__
+#define	reclen(x)	(strlen((x)->d_name))
+#else
+#define	reclen(x)	((x)->d_reclen)
+#endif
 
 /* program option related globals */
 struct progopts
@@ -22,18 +28,22 @@ struct progopts
 	char		*mp3dir;	/* mp3 base directory */
 	char		*fiddir;	/* fids base directory */
 	unsigned int	drive2perc;	/* percentage of fids to put in drive 2 */
-	char		*debugoptions;	/* verbosity options */
+	int		debugoptions;	/* debug options */
 	int		brokendrive2;	/* skip fids on drive 2 in playlists */
 	int		intellisort;	/* sort "intelligently" */
 	int		ignorecase;	/* ignore case in directory sorts */
+	int		newdb;		/* force creation of new inode db */
 	int		spreadplaylists;/* spread playlists over both drives */
-} progopts = {NULL, NULL, NULL, 50, "sSm", 0, 0, 0, 0};
+	int		olddirstruct;	/* old directory structure */
+} progopts = {NULL, NULL, NULL, 50, 0, 0, 0, 0, 0, 0};
 
 /* data structure related globals */
 struct fidinfo	*fihead;		/* head of linked list */
 struct fidinfo	*fitail;		/* tail of linked list */
 struct tagprop	tagprops[MAXTAGS];	/* properties of tags we know of */
 unsigned int	ntagprops;		/* number of detected tag names */
+GDBM_FILE	dbf;			/* handle for inode-to-fid database */
+char		*inotable[MAXFIDNUM];	/* inode-to-fid db in memory */
 
 /* prototypes */
 extern void	getid3info(struct fidinfo *);
@@ -181,19 +191,27 @@ islink(char *path)
 	return ((lstat(path, &statbuf) == 0) && (S_ISLNK(statbuf.st_mode)));
 }
 
+/* create a directory, don't bother if it exists, complain loudly about
+ * other failures */
+void
+emkdir(char *dir)
+{
+	if ((mkdir(dir, (mode_t) 0777) < 0) && (errno != EEXIST))
+	{
+		fprintf(stderr, "%s: can not create directory '%s': %s\n",
+				progopts.progname, dir, strerror(errno));
+		exit(1);
+	}
+}
+
 /* create subdirectory in fids tree */
 void
-mkfidsubdir(char *subdir)
+mksubdir(char *subdir)
 {
 	char fidsubdir[PATH_MAX];
 
 	sprintf(fidsubdir, "%s/%s", progopts.fiddir, subdir);
-	if ((mkdir(fidsubdir, (mode_t) 0777) < 0) && (errno != EEXIST))
-	{
-		fprintf(stderr, "%s: can not create directory '%s': %s\n",
-				progopts.progname, fidsubdir, strerror(errno));
-		exit(1);
-	}
+	emkdir(fidsubdir);
 }
 
 /* strip directory from path */
@@ -216,12 +234,31 @@ fidpathtofid(char *path)
 {
 	FID	fid;
 	char	*endptr;
+	char	*startnewstyle;
+	char	fidmajor[6];
+	char	fidminor[4];
 
-	fid = strtoul(stripdirfrompath(path), &endptr, 16);
-	if (*endptr)
-		return 0;	
+	/* try to detect a new-style fid path */
+	startnewstyle = path + strlen(path) - 10;
+	if ((startnewstyle[0] == '_') && (startnewstyle[6] = '/'))
+	{
+		strncpy(fidmajor, startnewstyle + 1, 5);
+		strncpy(fidminor, startnewstyle + 7, 3);
+		fidmajor[5] = '\0';
+		fidminor[3] = '\0';
+		fid = (strtoul(fidmajor, NULL, 16) << 12) +
+			strtoul(fidminor, NULL, 16);
+
+	}
 	else
-		return fid;
+	{
+		/* turn the filename part into an integer */
+		fid = strtoul(stripdirfrompath(path), &endptr, 16);
+		if (*endptr)
+			return 0;	
+	}
+
+	return fid;
 }
 
 /* calculate which drive to store fid on */
@@ -233,22 +270,82 @@ fidnumbertodrive(unsigned int fidnumber, int tagtype)
 	return ((fidnumber % 100) > (100 - progopts.drive2perc));
 }
 
-/* calculate fid number from inode number */
+/* calculate fid number from source file properties */
 unsigned int
-inodetofidnumber(ino_t inode)
+sourcefiletofidnumber(struct stat *statbuf)
 {
-	return (inode + GetFidNumber(FID_FIRSTNORMAL));
+	datum		key;
+	datum		content;
+	char		inostring[64];
+	char		fidstring[16];
+	unsigned int	fidnumber = 0;
+	int		i;
+
+	sprintf(inostring, "%d,%d,%lu",
+		major(statbuf->st_dev), minor(statbuf->st_dev), statbuf->st_ino);
+	key.dptr = inostring;
+	key.dsize = strlen(inostring) + 1;
+
+	content = gdbm_fetch(dbf, key);
+
+	if (content.dptr)
+	{
+		fidnumber = atoi(content.dptr);
+		if (progopts.debugoptions & DEBUG_INODEDB)
+			printf("fetched inode = %s, fidnumber = %x\n",
+				inostring, fidnumber);
+	}
+	else
+	{
+		for (i=GetFidNumber(FID_FIRSTNORMAL); i<MAXFIDNUM; i++)
+		{
+			if (inotable[i] == NULL)
+			{
+				fidnumber = i;
+				break;
+			}
+
+		}
+
+		if (fidnumber == 0)
+		{
+			fprintf(stderr, "%s: fidnumber overflow\n",
+					progopts.progname);
+			exit(1);
+		}
+
+		sprintf(fidstring, "%u", fidnumber);
+		content.dptr = fidstring;
+		content.dsize = strlen(fidstring) + 1;
+
+		gdbm_store(dbf, key, content, GDBM_INSERT);
+		inotable[fidnumber] = strdup(inostring);
+		if (progopts.debugoptions & DEBUG_INODEDB)
+			printf("stored inode = %s, fidnumber = %x\n",
+				inostring, fidnumber);
+	}
+
+	return (fidnumber);
 }
 
-/* build full path to fid from fid number and type */
+
+/* build full path to fid file from fid number and type */
 char *
 fidnumbertofidpath(unsigned int fidnumber, unsigned int fidtype, int tagtype)
 {
-	char fidpath[PATH_MAX];
+	char	fidpath[PATH_MAX];
+	FID	fid;
 
-	sprintf(fidpath, "%s/drive%u/fids/%x",
-		progopts.fiddir, fidnumbertodrive(fidnumber, tagtype),
-		MakeFid(fidnumber, fidtype));
+	fid = MakeFid(fidnumber, fidtype);
+
+	if (progopts.olddirstruct)
+		sprintf(fidpath, "%s/drive%u/fids/%x",
+			progopts.fiddir,
+			fidnumbertodrive(fidnumber, tagtype), fid);
+	else
+		sprintf(fidpath, "%s/drive%u/fids/_%05x/%03x",
+			progopts.fiddir, fidnumbertodrive(fidnumber, tagtype),
+			fid >> 12, fid & 0xfff);
 	return strdup(fidpath);
 }
 
@@ -280,12 +377,12 @@ mp3scan(char *mp3path, struct stat *statbuf, unsigned int fidnumber)
 	/* check whether this mp3 info is cached */
 	if (searchfidinfo(fidnumber))
 	{
-		if (strchr(progopts.debugoptions, 'M'))
+		if (progopts.debugoptions & DEBUG_SKIPMP3)
 			printf("no need to scan %s\n", mp3path);
 		return;
 	}
 
-	if (strchr(progopts.debugoptions, 'm'))
+	if (progopts.debugoptions & DEBUG_SCANMP3)
 		printf("scanning %s\n", mp3path);
 
 	/* allocate data */
@@ -410,7 +507,7 @@ dirscan(char *dir, unsigned int parentfidnumber, char *title)
 	FID		*fids;
 	int		nfids = 0;
 	char		*childpath;
-	unsigned int	childfidnumber = 0;
+	unsigned int	fidnumber = 0;
 	struct dirent	**namelist;
 	struct stat	statbuf;
 	struct fidinfo	*fidinfo;
@@ -418,7 +515,7 @@ dirscan(char *dir, unsigned int parentfidnumber, char *title)
 	char		tagvalue[MAXTAGLEN+1];
 
 	/* show what's going on */
-	if (strchr(progopts.debugoptions, 'd'))
+	if (progopts.debugoptions & DEBUG_SCANDIR)
 		printf("scanning %s\n", dir);
 
 	/* count and sort directory entries */
@@ -442,32 +539,36 @@ dirscan(char *dir, unsigned int parentfidnumber, char *title)
 			continue;
 
 		/* build full pathname to directory entry */
-		childpath = (char *) emalloc(strlen(dir) + namelist[i]->d_reclen + 2);
+		childpath = (char *) emalloc(strlen(dir) + reclen(namelist[i]) + 2);
 		sprintf(childpath, "%s/%s", dir, namelist[i]->d_name);
 
 		addfid = 0;
 		if (stat(childpath, &statbuf) == 0)
 		{
-			childfidnumber = inodetofidnumber(statbuf.st_ino);
-
 			/* if it's a symlink, just add it to the playlist */
 			if (islink(childpath))
+			{
 				addfid = checklink(childpath);
+				if (addfid)
+					fidnumber = sourcefiletofidnumber(&statbuf);
+			}
 			else
 			{
 				/* recurse into directories */
 				if (S_ISDIR(statbuf.st_mode))
 				{
-					if (dirscan(childpath, childfidnumber,
+					fidnumber = sourcefiletofidnumber(&statbuf);
+					if (dirscan(childpath, fidnumber,
 							stripdirfrompath(childpath)))
 						addfid++;
 				}
 				/* everything else is an mp3 or ignored */
 				else if (endswith(childpath, ".mp3"))
 				{
-					mp3scan(childpath, &statbuf, childfidnumber);
+					fidnumber = sourcefiletofidnumber(&statbuf);
+					mp3scan(childpath, &statbuf, fidnumber);
 					if ((progopts.brokendrive2 == 0) ||
-							(fidnumbertodrive(childfidnumber,
+							(fidnumbertodrive(fidnumber,
 								TAG_TYPE_TUNE) == 0))
 						addfid++;
 				}
@@ -479,7 +580,7 @@ dirscan(char *dir, unsigned int parentfidnumber, char *title)
 
 		/* only add non-empty directories and mp3's */
 		if (addfid)
-			fids[nfids++] = MakeFid(childfidnumber, FIDTYPE_TUNE);
+			fids[nfids++] = MakeFid(fidnumber, FIDTYPE_TUNE);
 
 		free(namelist[i]);
 	}
@@ -523,7 +624,8 @@ dirscan(char *dir, unsigned int parentfidnumber, char *title)
 	return (nfids);
 }
 
-/* get fidinfo from an existing fid */
+/* store valid tune tags into memory in order to prevent rescanning
+ * the corresponding mp3's */
 int
 fidpathtofidinfo(struct fidinfo *fidinfo, char *fidpath)
 {
@@ -624,7 +726,7 @@ fidpathtofidinfo(struct fidinfo *fidinfo, char *fidpath)
 		reasonstoinvalidate++;
 
 	/* check fid value */
-	if (inodetofidnumber(mp3statbuf.st_ino) != GetFidNumber(fid))
+	if (sourcefiletofidnumber(&mp3statbuf) != GetFidNumber(fid))
 		reasonstoinvalidate++;
 
 	if (reasonstoinvalidate)
@@ -634,7 +736,7 @@ fidpathtofidinfo(struct fidinfo *fidinfo, char *fidpath)
 		return 0;
 	}
 
-	/* prepare data for return */
+	/* OK, this fid passed; prepare data for return */
 	fidinfo->fidnumber   = GetFidNumber(fid);
 	fidinfo->tagtype     = TAG_TYPE_TUNE;
 	fidinfo->sourcemtime = mp3statbuf.st_mtime;
@@ -644,29 +746,26 @@ fidpathtofidinfo(struct fidinfo *fidinfo, char *fidpath)
 	return 1;
 }
 
-/* store valid tune tags into memory in order to prevent rescanning
- * the corresponding mp3's */
+/* recursively scan fids directories for valid fid files */
 void
-loadfids()
+loadfidsfromdir(char *dirpath)
 {
-	int		i;
-	char		dirpath[PATH_MAX];
-	char		fidpath[PATH_MAX];
 	DIR		*dirstream;
 	struct dirent	*dirent;
 	struct fidinfo	*fidinfo;
+	char		fidpath[PATH_MAX];
 
-	if (strchr(progopts.debugoptions, 's'))
-		puts("reading existings fids");
+	if ((dirstream = opendir(dirpath)) == NULL)
+		return;
 
-	for (i=0; i<2; i++)
+	while ((dirent = readdir(dirstream)) != NULL)
 	{
-		sprintf(dirpath, "%s/drive%d/fids", progopts.fiddir, i);
-		if ((dirstream = opendir(dirpath)) == NULL)
-			continue;
-		while ((dirent = readdir(dirstream)) != NULL)
+		sprintf(fidpath, "%s/%s", dirpath, dirent->d_name);
+
+		if (dirent->d_name[0] == '_')
+			loadfidsfromdir(fidpath);
+		else
 		{
-			sprintf(fidpath, "%s/%s", dirpath, dirent->d_name);
 
 			fidinfo = fitail;
 			if (fidinfo->ntagvalues)
@@ -677,40 +776,73 @@ loadfids()
 			}
 			fidpathtofidinfo(fidinfo, fidpath);
 		}
-		closedir(dirstream);
+	}
+	closedir(dirstream);
+}
+
+/* run loadfidsfromdir on all top fids dirs */
+void
+loadfids()
+{
+	int		drive;
+	char		dirpath[PATH_MAX];
+
+	if (progopts.debugoptions & DEBUG_STAGES)
+		puts("reading existings fids");
+
+	for (drive=0; drive<2; drive++)
+	{
+		sprintf(dirpath, "%s/drive%d/fids", progopts.fiddir, drive);
+		loadfidsfromdir(dirpath);
 	}
 }
 
-/* delete everything from the fids directories */
+/* delete everything from a fids directory */
 void
-delfids()
+delfidsfromdir(char *dirpath)
 {
-	int		i;
-	int		showremove = 0;
-	char		dirpath[PATH_MAX];
 	char		fidpath[PATH_MAX];
 	DIR		*dirstream;
 	struct dirent	*dirent;
 
-	if (strchr(progopts.debugoptions, 's'))
-		puts("deleting existing fids");
 
-	if (strchr(progopts.debugoptions, 'r'))
-		showremove++;
+	if ((dirstream = opendir(dirpath)) == NULL)
+		return;
 
-	for (i=0; i<2; i++)
+	while ((dirent = readdir(dirstream)) != NULL)
 	{
-		sprintf(dirpath, "%s/drive%d/fids", progopts.fiddir, i);
-		if ((dirstream = opendir(dirpath)) == NULL)
-			continue;
-		while ((dirent = readdir(dirstream)) != NULL)
+		sprintf(fidpath, "%s/%s", dirpath, dirent->d_name);
+		if (dirent->d_name[0] == '_')
 		{
-			sprintf(fidpath, "%s/%s", dirpath, dirent->d_name);
-			if (showremove)
+			delfidsfromdir(fidpath);
+			if (progopts.debugoptions & DEBUG_REMOVEFID)
+				printf("removing directory %s\n", fidpath);
+			rmdir(fidpath);
+		}
+		else
+		{
+			if (progopts.debugoptions & DEBUG_REMOVEFID)
 				printf("unlinking %s\n", fidpath);
 			unlink(fidpath);
 		}
-		closedir(dirstream);
+	}
+	closedir(dirstream);
+}
+
+/* delete everything from the top fids directories */
+void
+delfids()
+{
+	int		drive;
+	char		dirpath[PATH_MAX];
+
+	if (progopts.debugoptions & DEBUG_STAGES)
+		puts("deleting existing fids");
+
+	for (drive=0; drive<2; drive++)
+	{
+		sprintf(dirpath, "%s/drive%d/fids", progopts.fiddir, drive);
+		delfidsfromdir(dirpath);
 	}
 }
 
@@ -730,10 +862,13 @@ usage(int exitstatus)
 	fprintf(fp, "\t\t-b: skips fids on drive 2 in playlists\n");
 	fprintf(fp, "\t\t-i: ignore case in directory sorting\n");
 	fprintf(fp, "\t\t-I: \"intelligent\" directory sorting\n");
+	fprintf(fp, "\t\t-n: force creation of new inode database\n");
+	fprintf(fp, "\t\t-o: use old (pre-2.0b13) directory structure\n");
 	fprintf(fp, "\t\t-2: percentage of files on second drive\n");
 	fprintf(fp, "\t\t-s: spread playlists over both drives\n");
 	fprintf(fp, "\t\t-d: debug options\n");
 	fprintf(fp, "\tdebug options:\n");
+	fprintf(fp, "\t\td: show database operations\n");
 	fprintf(fp, "\t\ts: show stages of program\n");
 	fprintf(fp, "\t\tS: show statistics\n");
 	fprintf(fp, "\t\tr: show fids being removed\n");
@@ -745,17 +880,37 @@ usage(int exitstatus)
 
 /* create the necessary subdirectories in fid tree */
 void
-mkfidsubdirs()
+mksubdirs()
 {
-	if (strchr(progopts.debugoptions, 's'))
+	if (progopts.debugoptions & DEBUG_STAGES)
 		puts("creating directories");
-	mkfidsubdir("drive0");
-	mkfidsubdir("drive0/fids");
-	mkfidsubdir("drive0/lost+found");
-	mkfidsubdir("drive0/var");
-	mkfidsubdir("drive1");
-	mkfidsubdir("drive1/fids");
-	mkfidsubdir("drive1/lost+found");
+	mksubdir("drive0");
+	mksubdir("drive1");
+	mksubdir("drive0/fids");
+	mksubdir("drive1/fids");
+	mksubdir("drive0/lost+found");
+	mksubdir("drive1/lost+found");
+	mksubdir("drive0/var");
+}
+
+/* make a new-style fid subdirectory needed for a fid file */
+void
+mkfidsubdir(char *fidpath)
+{
+	char	*lastslash;
+	char	*fiddir;
+
+	if (progopts.olddirstruct)
+		return;
+
+	fiddir = strdup(fidpath);
+	if ((lastslash = strrchr(fiddir, '/')) != NULL)
+	{
+		*lastslash = '\0';
+		emkdir(fiddir);
+	}
+
+	free(fiddir);
 }
 
 /* comparison routine for use with qsort(3) */
@@ -770,12 +925,7 @@ fidinfocompar(const void *a, const void *b)
 	if (fidnumbera == fidnumberb)
 		return 0;
 	else
-	{
-		if (fidnumbera > fidnumberb)
-			return 1;
-		else
-			return -1;
-	}
+		return (fidnumbera > fidnumberb) ? 1 : -1;
 }
 
 void
@@ -785,6 +935,7 @@ savefids()
 	int		lastfidnumber = 0;
 	unsigned int	nfids = 0;
 	unsigned int	emptyfids = 0;
+	unsigned int	netemptyfids;
 	unsigned int	tunefids = 0;
 	unsigned int	playlistfids = 0;
 	struct fidinfo	*fidinfo;
@@ -800,7 +951,7 @@ savefids()
 	char		*fidpath;
 
 	/* show what's going on */
-	if (strchr(progopts.debugoptions, 's'))
+	if (progopts.debugoptions & DEBUG_STAGES)
 		puts("writing fids and databases");
 
 	/* open database files */
@@ -837,6 +988,8 @@ savefids()
 		fidinfo = fidinfoarray[i];
 		fidpath = fidnumbertofidpath(fidinfo->fidnumber, FIDTYPE_TUNE,
 				fidinfo->tagtype);
+
+		mkfidsubdir(fidpath);
 
 		if (fidinfo->tagtype == TAG_TYPE_PLAYLIST)
 		{
@@ -905,9 +1058,11 @@ savefids()
 	}
 
 	/* display statistics */
-	if (strchr(progopts.debugoptions, 'S'))
+	if (progopts.debugoptions & DEBUG_STATISTICS)
 	{
+		fflush(fpdatabase);
 		fstat(fileno(fpdatabase), &statbuf);
+		netemptyfids = emptyfids - 16;
 
 		puts("database statistics:");
 		printf("\tdatabase size is %lu bytes, containing:\n",
@@ -915,11 +1070,11 @@ savefids()
 		/* printf("%10u real fids\n",   nfids); */
 		printf("\t%10u tunes\n",       tunefids);
 		printf("\t%10u playlists\n",   playlistfids);
-		printf("\t%10u empty fids\n",  emptyfids + 1);
+		printf("\t%10u empty fids\n",  netemptyfids);
 		printf("\tdatabase size efficiency is %3.1f%%\n",
-			100.0 * statbuf.st_size / (statbuf.st_size + emptyfids + 1));
+			100.0 * statbuf.st_size / (statbuf.st_size + netemptyfids));
 		printf("\tdatabase fids efficiency is %3.1f%%\n",
-			100.0 * nfids / (nfids + emptyfids + 1));
+			100.0 * nfids / (nfids + netemptyfids));
 	}
 
 	/* close database files */
@@ -931,9 +1086,68 @@ savefids()
 void
 scanfids()
 {
-	if (strchr(progopts.debugoptions, 's'))
+	if (progopts.debugoptions & DEBUG_STAGES)
 		puts("scanning MP3 directories");
 	dirscan(progopts.mp3dir, GetFidNumber(FID_ROOTPLAYLIST) , "All Music");
+}
+
+/* load the inode-to-fid database */
+void
+loaddb()
+{
+	char		dbpath[PATH_MAX];
+	datum		key;
+	datum		nextkey;
+	datum		content;
+	unsigned int	fidnumber;
+	unsigned int	minfidnumber;
+
+	minfidnumber = GetFidNumber(FID_FIRSTNORMAL);
+
+	sprintf(dbpath, "%s/drive0/var/mp3tofid", progopts.fiddir);
+
+	dbf = gdbm_open(dbpath, 0, progopts.newdb ? GDBM_NEWDB : GDBM_WRCREAT, 0644, NULL);
+
+	key = gdbm_firstkey(dbf);
+	while (key.dptr)
+	{
+		nextkey = gdbm_nextkey(dbf, key);
+		content = gdbm_fetch(dbf, key);
+		fidnumber = atoi(content.dptr);
+		if ((fidnumber >= minfidnumber) && (fidnumber < MAXFIDNUM))
+		{
+			inotable[fidnumber] = key.dptr;
+			if (progopts.debugoptions & DEBUG_INODEDB)
+				printf("loading inode = %s, fidnumber %x\n",
+					key.dptr, fidnumber);
+		}
+		else
+			free(key.dptr);
+		free(content.dptr);
+		key = nextkey;
+	}
+}
+
+/* purge and close the inode-to-fid database */
+void
+purgedb()
+{
+	unsigned int	fidnumber;
+	datum		key;
+
+	for (fidnumber=0; fidnumber<MAXFIDNUM; fidnumber++)
+	{
+		if ((inotable[fidnumber]) && (!searchfidinfo(fidnumber)))
+		{
+			key.dptr = inotable[fidnumber];
+			key.dsize = strlen(inotable[fidnumber]) + 1;
+			gdbm_delete(dbf, key);
+			if (progopts.debugoptions & DEBUG_INODEDB)
+				printf("deleting inode = %s, fidnumber %x\n",
+					key.dptr, fidnumber);
+		}
+	}
+	gdbm_close(dbf);
 }
 
 /* main routine */
@@ -941,13 +1155,14 @@ int
 main(int argc, char **argv)
 {
 	int	c;
+	char	*debugstring = "sSm";
 
 	if ((progopts.progname = strrchr(argv[0], '/')) == NULL)
 		progopts.progname = argv[0];
 	else
 		progopts.progname++;
 
-	while ((c = getopt(argc, argv, "2:bd:hiIsv")) != EOF)
+	while ((c = getopt(argc, argv, "2:bd:hiInosv")) != EOF)
 	{
 		switch (c)
 		{
@@ -960,7 +1175,7 @@ main(int argc, char **argv)
 				progopts.brokendrive2++;
 				break;
 			case 'd':
-				progopts.debugoptions = optarg;
+				debugstring = optarg;
 				break;
 			case 'h':
 				usage(0);
@@ -970,6 +1185,12 @@ main(int argc, char **argv)
 				break;
 			case 'I':
 				progopts.intellisort++;
+				break;
+			case 'n':
+				progopts.newdb++;
+				break;
+			case 'o':
+				progopts.olddirstruct++;
 				break;
 			case 's':
 				progopts.spreadplaylists++;
@@ -988,12 +1209,29 @@ main(int argc, char **argv)
 	progopts.mp3dir = argv[optind];
 	progopts.fiddir = argv[optind+1];
 
+	if (strchr(debugstring, 'd'))
+		progopts.debugoptions |= DEBUG_SCANDIR;
+	if (strchr(debugstring, 'i'))
+		progopts.debugoptions |= DEBUG_INODEDB;
+	if (strchr(debugstring, 'm'))
+		progopts.debugoptions |= DEBUG_SCANMP3;
+	if (strchr(debugstring, 'M'))
+		progopts.debugoptions |= DEBUG_SKIPMP3;
+	if (strchr(debugstring, 'r'))
+		progopts.debugoptions |= DEBUG_REMOVEFID;
+	if (strchr(debugstring, 's'))
+		progopts.debugoptions |= DEBUG_STAGES;
+	if (strchr(debugstring, 'S'))
+		progopts.debugoptions |= DEBUG_STATISTICS;
+
 	initdata();
-	mkfidsubdirs();
+	mksubdirs();
+	loaddb();
 	loadfids();
 	scanfids();
 	delfids();
 	savefids();
+	purgedb();
 
 	return 0;
 }
