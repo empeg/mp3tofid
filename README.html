@@ -1,0 +1,163 @@
+<html>
+<head>
+<title>
+mp3tofid README
+</title>
+</head>
+<body>
+<font face="Verdana,Arial,Helvetica" size=2>
+<h2>mp3tofid README</h2>
+mp3tofid is a Linux utility that will convert your directory tree of
+MP3 files to FID's, ready for uploading to your empeg using
+rsync, or any other uploading tool.
+mp3tofid and
+<a href="http://rsync.samba.org/"> rsync</a>
+together will enable you to synchronise any
+change you make to your MP3 directory to your empeg automatically
+and efficiently.
+<p>
+mp3tofid will create a directory structure filled with symbolic
+links to your MP3's and FID playlists that reflect your directory
+structure. You can create additional playlists by just making
+symlinks inside your MP3 directory tree. These symlinks may
+be either target MP3's or directories containing MP3's.
+Make sure these symlinks stay inside this directory tree,
+or your FID playlists will be invalid. symlinks should not nest.
+<p>
+mp3tofid will calculate the target FID number based on the inode
+number of your MP3 file. So if you rename or move your MP3's,
+your MP3 will not need to be reuploaded, as its FID number
+remains the same. If you change ID3 tags, rsync will make sure
+only the differences between old and new files are transmitted.
+<p>
+But even if a file has to be transferred completely, rsync still
+is faster than emplode. And it is very stable; I uploaded 70 GB
+in one run. And if you can't wait for an upload, just interrupt
+it; rsync will pick up where it has left the previous run.
+<p>
+mp3tofid and rsync completely bypass emplode, except for
+building the player database. After deleting you original
+FID's and uploading the new ones, your player database
+will be invalid. Just delete it, and the player will
+rebuild the database. Unfortunately, emplode will force
+another database rebuild when you connect. Still, I strongly
+advise to run emplode, to see whether no errors are detected.
+<p>
+Some day, I hope to be able to rebuild the player database
+off the empeg as well. This should run much faster on a PC
+and will make syncing even faster.
+<p>
+Roger of Empeg has written
+<a href=" http://www.differentpla.net/~roger/empeg/car/rsync.html">here</a>
+how you can use and install rsync on an empeg.
+<p>
+Here's how I use mp3tofid and rsync:<br>
+My MP3's live in /mp3.<br>
+My FID tree is in /home/pim/empegfids.<br>
+I convert my MP3 tree using
+<pre>
+mp3tofid -Ii /mp3 /home/pim/empegfids
+</pre>
+The first run runs at about 75 GB per hour on my PC.
+Next runs take less than a minute, if nothing much has changed.
+<p>
+I use my Linux box as an rsync server, and my empeg as an rsync
+client. Here's how I set up my /etc/rsyncd.conf file:
+<pre>
+[drive0]
+path = /home/pim/empegfids/drive0/fids
+read only = yes
+hosts allow = myempeg.mydomain.com
+use chroot = no
+
+[drive1]
+path = /home/pim/empegfids/drive1/fids
+read only = yes
+hosts allow = myempeg.mydomain.com
+use chroot = no
+</pre>
+On my empeg, I run this script:
+<pre>
+#!/bin/sh
+set -x
+rwm
+for i in 0 1
+do
+        rsync \
+                --recursive \
+                --times \
+                --delete \
+                --verbose \
+                --stats \
+                --copy-unsafe-links \
+                192.168.23.45::drive$i /drive$i/fids
+done
+rm -f /drive0/var/playlists
+rm -f /drive0/var/tags
+rm -f /drive0/var/database
+rom
+</pre>
+Then I press CTRL-D which will restart the player. The player will
+rebuild the database, but will be unable to save it, as the filesystem
+was left readonly. This does not matter, as emplode will force another
+rebuild anyway, as soon as you connect to the player. This second
+rebuild will be saved, and you're ready.
+
+<h3>Testing</h3>
+
+If you follow this example, ALL of your existing music will be removed.
+In order to test this software, I recommend you rename your existing
+fid directories on your empeg and create new ones. This will preserve
+your music in case you prefer emplode after all. Then upload a small
+batch to see if everything works.
+
+<h3>Command line options</h3>
+-v: show version<br>
+-i: ignore case in sorting<br>
+-I: "intelligent" sorting: ignore "The", "A" and "An"<br>
+-2: percentage of FID's to put on second drive. Default is 50<br>
+-d: debug option. Default  "sm"<br>
+<p>
+debug options:<br>
+s: show stages of program<br>
+r: show fids being removed<br>
+d: show directories being scanned<br>
+m: show MP3's being scanned<br>
+M: show MP3's being skipped<br>
+
+<h3>Requirements</h3>
+
+In order to compile mp3tofid, you need 
+<a href="http://mad.sourceforge.net/">libmad</a> and
+<a href="http://id3lib.sourceforge.net/">id3lib</a>.
+<p>
+libmad comes with Red Hat 7.3 as an RPM, which installed
+nicely on my RH 7.1 system. I installed id3lib as an RPM
+which I found at Mandrake using
+<a href="http://www.rpmfind.net/">rpmfind</a>.
+<p>
+mp3tofid needs to be compiled using a C++ compiler. It's
+not really written in C++, but in plain C, but I couldn't
+figure out how to link a C program with libid3.
+
+<h3>Bugs and limitations</h3>
+<li>only MP3 support. No wav/wma/ogg/whatever support.
+<li>play counts are lost at every sync
+<li>no support for special attributes, like "ignore as child"
+<li>no playlist consistency checking (yet)
+<li>no warning for or disabling of untagged MP3 files (yet)
+<li>MP3 scanning could be much faster, probably
+<li>there are hardly any comments in the source code
+<li>there's no man page
+<li>your MP3 files need to be in a single filesystem
+<li>your inode numbers may be too big, I'm not sure.
+<li>flaky drive balancing algorithm
+
+<h3>Licensing</h3>
+mp3tofid is released under the GPL. Please read the file named COPYING.
+
+<h3>Author</h3>
+<a href="mailto:pim@zandbergen.org">Pim Zandbergen</a>
+</font>
+</body>
+</html>
