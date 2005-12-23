@@ -1,0 +1,15 @@
+- enable bigendian CPU's
+- cygwin port
+- docs
+- fix bug with huge id3v2 tags
+- delete entries in gdbm db for invalid fids immediately
+  - release fids for empty playlists
+- gdbm db versioning
+- extensive sorting options
+- soup mode
+- jemplode style crc tags
+- fix rid calculation for flac files with id3 tags
+- follow windows shortcuts (cygwin build)
+- strip newlines in tags
+- trim whitespace in tags
+- chop long tags

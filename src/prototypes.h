@@ -1,0 +1,13 @@
+FILE	*efopen(char *, char *);
+char	*utf8tointernal(char *);
+char	*utf16tointernal(char *, size_t); 
+char	*fstointernal(char *, size_t);
+char	*fstodb(char *, size_t);
+char	*calculaterid(FILE *, size_t, size_t);
+void	init_iconv();
+void	scanmp3(struct fidinfo *, struct statex *);
+void	scanwave(struct fidinfo *, struct statex *);
+void	scanwma(struct fidinfo *, struct statex *);
+void	scanvorbis(struct fidinfo *, struct statex *);
+void	scanflac(struct fidinfo *, struct statex *);
+void	parsevorbiscomment(struct fidinfo *, char *);
