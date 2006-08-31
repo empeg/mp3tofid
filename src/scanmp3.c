@@ -18,6 +18,7 @@
 
 #define INPUT_BUFFER_SIZE	(65536)
 
+extern struct progopts progopts;
 
 void
 scanid3(struct fidinfo *fidinfo, FILE *fp)
@@ -65,7 +66,7 @@ scanid3(struct fidinfo *fidinfo, FILE *fp)
 			}
 
 			if (id3ucs4 && (utf8 = id3_ucs4_utf8duplicate(id3ucs4)))
-				fidinfo->tagvalues[info[i].tagidx] = utf8tointernal((char *)utf8);
+				fidinfo->tagvalues[info[i].tagidx] = nullifempty(utf8tointernal((char *)utf8));
 
 			if (utf8)
 			{
@@ -209,7 +210,8 @@ scanmp3(struct fidinfo *fidinfo, struct statex *statex)
 	}
 	else
 	{
-		fprintf(stderr, "can get properties from '%s'\n", statex->path);
+		fprintf(stderr, "%s: %s is not an mp3 file\n", progopts.progname, statex->path);
+		fidinfo->scanned=0;
 	}
 
 	mad_header_finish(&madheader);

@@ -4,6 +4,7 @@ char	*utf16tointernal(char *, size_t);
 char	*fstointernal(char *, size_t);
 char	*fstodb(char *, size_t);
 char	*calculaterid(FILE *, size_t, size_t);
+char	*nullifempty(char *);
 void	init_iconv();
 void	scanmp3(struct fidinfo *, struct statex *);
 void	scanwave(struct fidinfo *, struct statex *);

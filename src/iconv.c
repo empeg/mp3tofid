@@ -97,14 +97,14 @@ codesetconv(iconv_t cd, char *instring, size_t inlen)
 	iconv(cd, NULL, NULL, NULL, NULL);
 
 	/* do the conversion */
-	if ((nconv = iconv(cd, &frombuf, &fromlen, &tobuf, &tolen)) == (size_t) -1)
+	if (((nconv = iconv(cd, &frombuf, &fromlen, &tobuf, &tolen)) == (size_t) -1) && (errno != E2BIG))
 	{
 		for (i=0; i<inlen; i++)
 			if (!isprint(instring[i]))
 				instring[i] = '.';
 		fprintf(stderr, "%s: cannot convert \"%s\", length %ld: %s\n",
 			progopts.progname, instring, inlen, strerror(errno));
-		return strdup(instring);
+		return NULL;
 	}
 	else
 		return strdup(outstring);

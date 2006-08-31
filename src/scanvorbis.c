@@ -55,6 +55,7 @@ scanvorbis(struct fidinfo *fidinfo, struct statex *statex)
 		fprintf(stderr, "%s: %s is not a Vorbis file\n",
 			progopts.progname, statex->path);
 		fclose(fp);
+		fidinfo->scanned = 0;
 		return;
 	}
 

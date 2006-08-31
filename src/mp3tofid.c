@@ -186,7 +186,6 @@ emalloc(size_t size)
 		fprintf(stderr, "%s: malloc() failed\n", progopts.progname);
 		exit(1);
 	}
-	//printf("malloc(%d) = 0x%x\n", size, (int)memory);
 
 	return (memory);
 }
@@ -203,7 +202,6 @@ ecalloc(size_t nmemb, size_t size)
 			progopts.progname, nmemb, size);
 		exit(1);
 	}
-	//printf("calloc(%d, %d) = 0x%x\n", nmemb, size, (int)memory);
 
 	return (memory);
 }
@@ -221,6 +219,16 @@ efopen(char *path, char *mode)
 		exit(1);
 	}
 	return fp;
+}
+
+/* return NULL if a string is length zero, otherwise the string itself */
+char *
+nullifempty(char *string)
+{
+	if (string && strlen(string))
+		return string;
+	else
+		return NULL;
 }
 
 /* allocate a clear node in linked list */
@@ -489,6 +497,12 @@ sourcefiletofidnumber(struct statex *se, unsigned int infidnumber)
 	return (fidnumber);
 }
 
+void
+releasefid(unsigned int fidnumber)
+{
+	inotable[fidnumber] = NULL;
+}
+
 
 /* build full path to fid file from fid number and type */
 char *
@@ -573,8 +587,12 @@ checkexclude(char *path)
 		{
 			switch (rlp->retype)
 			{
-				case RE_EXCLUDE: return 1; break;
-				case RE_INCLUDE: return 0; break;
+				case RE_EXCLUDE:
+					return 1;
+					break;
+				case RE_INCLUDE:
+					return 0;
+					break;
 			}
 		}
 	}
@@ -660,21 +678,33 @@ checkfids()
 	if (progopts.showstages)
 		puts("performing sanity checks");
 
-	/* check for illegal entries in playlists */
 	for (fidinfo = fihead; fidinfo && fidinfo->ntagvalues; fidinfo = fidinfo->next)
 	{
-		if (fidinfo->tagtype != TAG_TYPE_PLAYLIST)
-			continue;
-
-		for (i=0; i<fidinfo->pllength; i++)
+		if (fidinfo->tagtype == TAG_TYPE_PLAYLIST)
 		{
-			if (searchfidinfo(getfidnumber(fidinfo->playlist[i])) == NULL)
+			/* check for illegal entries in playlists */
+			for (i=0; i<fidinfo->pllength; i++)
 			{
-				fprintf(stderr, "%s: playlist %x (%s) points to non-existent fid %x\n",
+				if (searchfidinfo(getfidnumber(fidinfo->playlist[i])) == NULL)
+				{
+					fprintf(stderr, "%s: playlist %x (%s) points to non-existent fid %x\n",
+						progopts.progname,
+						fidinfo->fidnumber,
+						fidinfo->tagvalues[TAG_TITLE_NUM],
+						getfidnumber(fidinfo->playlist[i]));
+					errors++;
+				}
+			}
+		}
+		else if (fidinfo->tagtype == TAG_TYPE_TUNE)
+		{
+			/* check for illegal duration */
+			if (atoll(fidinfo->tagvalues[TAG_DURATION_NUM]) == 0LL)
+			{
+				fprintf(stderr, "%s: tune %x (%s) has duration 0\n",
 					progopts.progname,
 					fidinfo->fidnumber,
-					fidinfo->tagvalues[TAG_TITLE_NUM],
-					getfidnumber(fidinfo->playlist[i]));
+					fidinfo->tagvalues[TAG_LOADFROM_NUM]);
 				errors++;
 			}
 		}
@@ -731,6 +761,7 @@ tunescan(struct statex *se, unsigned int fidnumber)
 	tagvalues[TAG_CTIME_NUM]    = strdup(tagvalue);
 	sprintf(tagvalue, "%lu", (unsigned long) se->size);
 	tagvalues[TAG_LENGTH_NUM]   = strdup(tagvalue);
+	tagvalues[TAG_DURATION_NUM] = "0";
 
 	fidinfo->fidnumber   = fidnumber;
 	fidinfo->tagtype     = TAG_TYPE_TUNE;
@@ -869,6 +900,7 @@ dirscan(const char *dir, unsigned int parentfidnumber, char *title)
 	int		addfid;
 	FID		*fids;
 	int		nfids = 0;
+	int		includethis = 0;
 	char		*childpath;
 	unsigned int	fidnumber = 0;
 	struct dirent	**namelist;
@@ -911,14 +943,8 @@ dirscan(const char *dir, unsigned int parentfidnumber, char *title)
 		childpath = (char *) emalloc(strlen(dir) + reclen(namelist[i]) + 2);
 		sprintf(childpath, "%s/%s", dir, namelist[i]->d_name);
 
-		/* check this one isn't excluded */
-		if (checkexclude(childpath))
-		{
-			if (progopts.showexclusions)
-				printf("excluding %s\n", childpath);
-			free(childpath);
-			continue;
-		}
+		/* check this one isn't excluded, report later */
+		includethis = !checkexclude(childpath);
 
 		addfid = 0;
 		if (stat(childpath, &statbuf) == 0)
@@ -938,20 +964,30 @@ dirscan(const char *dir, unsigned int parentfidnumber, char *title)
 				/* maybe ignore symlinks */
 				if (!progopts.ignoresymlinks)
 				{
-					addfid = checklink(childpath);
-					if (addfid)
-						fidnumber = sourcefiletofidnumber(se[i], 0);
+					if (includethis)
+					{
+						addfid = checklink(childpath);
+						if (addfid)
+							fidnumber = sourcefiletofidnumber(se[i], 0);
+					}
+					else if (progopts.showexclusions)
+						printf("excluding link %s\n", childpath);
 				}
 			}
 			/* if it's a directory, recurse into it */
 			else if (S_ISDIR(statbuf.st_mode))
 			{
-				fidnumber = sourcefiletofidnumber(se[i], 0);
-				if (dirscan(childpath, fidnumber,
-						stripdirfrompath(childpath)))
-					addfid++;
-				else
-					/*releasefid(fidnumber)*/;
+				if (includethis)
+				{
+					fidnumber = sourcefiletofidnumber(se[i], 0);
+					if (dirscan(childpath, fidnumber,
+							stripdirfrompath(childpath)))
+						addfid++;
+					else
+						releasefid(fidnumber);
+				}
+				else if (progopts.showexclusions)
+					printf("excluding directory %s\n", childpath);
 			}
 			/* windows shortcuts */
 			else if (!progopts.ignoreshortcuts && endswith(childpath, ".lnk"))
@@ -978,16 +1014,23 @@ dirscan(const char *dir, unsigned int parentfidnumber, char *title)
 				se[i]->codec = CODEC_FLAC;
 			else if (!progopts.ignoreflac && endswith(childpath, ".fla"))
 				se[i]->codec = CODEC_FLAC;
-
 		}
 		else
 			fprintf(stderr, "%s: can not stat '%s': %s\n",
 						progopts.progname, childpath, strerror(errno));
 
-		/* add non-empty directories and links to tunes */
+		/* add passed directories and links */
 		if (addfid)
 			fids[nfids++] = makefid(fidnumber, FIDTYPE_TUNE);
 
+		/* remove excluded tunes */
+		if ((se[i]->codec != CODEC_NONE) && (!includethis))
+		{
+			free(se[i]);
+			se[i] = NULL;
+			if (progopts.showexclusions)
+				printf("excluding tune %s\n", childpath);
+		}
 	}
 
 	/* second pass: remove tunes with lesser codec weights */
@@ -997,12 +1040,18 @@ dirscan(const char *dir, unsigned int parentfidnumber, char *title)
 		{
 			for (j=0; j<i; j++)
 			{
-				if (se[j] && (se[j]->codec != CODEC_NONE) && (basenamecmp(se[i]->path, se[j]->path) == 0))
+				if (se[i] && se[j] && (se[j]->codec != CODEC_NONE) && (basenamecmp(se[i]->path, se[j]->path) == 0))
 				{
 					if (codecweight[se[i]->codec] > codecweight[se[j]->codec])
-						se[j]->codec = CODEC_NONE;
+					{
+						free(se[j]);
+						se[j] = NULL;
+					}
 					else if (codecweight[se[i]->codec] < codecweight[se[j]->codec])
-						se[i]->codec = CODEC_NONE;
+					{
+						free(se[i]);
+						se[i] = NULL;
+					}
 				}
 			}
 		}

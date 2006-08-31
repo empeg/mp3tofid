@@ -101,6 +101,7 @@ scanflac(struct fidinfo *fidinfo, struct statex *statex)
 		fprintf(stderr, "%s: error reading flac metadata from %s, status = \"%s\"\n",
 			progopts.progname, statex->path,
 			FLAC__Metadata_ChainStatusString[FLAC__metadata_chain_status(chain)]);
+		fidinfo->scanned=0;
 		return;
 	}
 

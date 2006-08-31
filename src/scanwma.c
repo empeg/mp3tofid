@@ -44,7 +44,7 @@ static ASF_content_description_t	contenth;
 static ASF_waveformatex_t		wfh;
 
 int
-asf_check_header(FILE *fp)
+asf_check_header(struct statex *statex, FILE *fp)
 {
 	unsigned char	asfhdrguid[16]={0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11,
 					0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C};
@@ -54,7 +54,8 @@ asf_check_header(FILE *fp)
 
 	if (memcmp(asfhdrguid, asfh.objh.guid, 16))
 	{
-		fprintf(stdout, "ASF_check: not ASF guid!\n");
+		fprintf(stderr, "%s: %s is not a wma file\n",
+			progopts.progname, statex->path);
 		return 0;
 	}
 
@@ -70,9 +71,9 @@ void
 parsewmatag(struct fidinfo *fidinfo, char *tagname, char *utf16string, size_t utf16len)
 {
 	if (strcmp(tagname, "WM/AlbumTitle") == 0)
-		fidinfo->tagvalues[TAG_SOURCE_NUM] = utf16tointernal(utf16string, utf16len);
+		fidinfo->tagvalues[TAG_SOURCE_NUM] = nullifempty(utf16tointernal(utf16string, utf16len));
 	else if (strcmp(tagname, "WM/Genre") == 0)
-		fidinfo->tagvalues[TAG_GENRE_NUM] = utf16tointernal(utf16string, utf16len);
+		fidinfo->tagvalues[TAG_GENRE_NUM] = nullifempty(utf16tointernal(utf16string, utf16len));
 	else if (strcmp(tagname, "WM/Track") == 0)
 		;
 		/* FIXME
@@ -86,7 +87,7 @@ parsewmatag(struct fidinfo *fidinfo, char *tagname, char *utf16string, size_t ut
 	else if (strcmp(tagname, "WM/TrackNumber") == 0)
 		; /* ditto */
 	else if (strcmp(tagname, "WM/Year") == 0)
-		fidinfo->tagvalues[TAG_YEAR_NUM] = utf16tointernal(utf16string, utf16len);
+		fidinfo->tagvalues[TAG_YEAR_NUM] = nullifempty(utf16tointernal(utf16string, utf16len));
 }
 
 void
@@ -195,7 +196,7 @@ read_asf_header(struct fidinfo *fidinfo, struct statex *statex, FILE *fp)
 					fread(string, contenth.comment_size, 1, fp);
 					if (contenth.comment_size)
 						fidinfo->tagvalues[TAG_COMMENT_NUM] =
-							strdup(utf16tointernal(string, contenth.comment_size)); 
+							nullifempty(strdup(utf16tointernal(string, contenth.comment_size))); 
 				}
 				/* rating */
 				if (contenth.rating_size != 0)
@@ -275,7 +276,9 @@ scanwma(struct fidinfo *fidinfo, struct statex *statex)
 	FILE	*fp;
 
 	fp = efopen(statex->path, "r");
-	if (asf_check_header(fp))
+	if (asf_check_header(statex, fp))
 		read_asf_header(fidinfo, statex, fp);
+	else
+		fidinfo->scanned = 0;
 	fclose(fp);
 }
