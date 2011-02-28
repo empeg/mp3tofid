@@ -80,6 +80,7 @@ extract_metadata(struct fidinfo *fidinfo, FLAC__StreamMetadata *block, size_t si
 		case FLAC__METADATA_TYPE_APPLICATION:
 		case FLAC__METADATA_TYPE_SEEKTABLE:
 		case FLAC__METADATA_TYPE_CUESHEET:
+		case FLAC__METADATA_TYPE_PICTURE:
 		case FLAC__METADATA_TYPE_UNDEFINED:
 			break;
 	}

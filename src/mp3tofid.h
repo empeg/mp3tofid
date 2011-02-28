@@ -151,7 +151,7 @@ struct cds
 struct progopts
 {
 	const char	*progname;		/* program name */
-	const char	*mp3dir;		/* mp3 base directory */
+	const char	**mp3dirs;		/* mp3 base directories */
 	const char	*fiddir;		/* fids base directory */
 	char		*fscodeset;		/* filesystem character encoding */
 	char		*internalcodeset;	/* internal character encoding */
@@ -190,4 +190,5 @@ struct progopts
 	int		showstatistics;		/* show statistics */
 	int		showexclusions;		/* show exclusions */
 	int		showmarks;		/* show marks */
+	int		mainmp3diridx;		/* index to main mp3 directory */
 };

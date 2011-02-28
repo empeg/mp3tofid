@@ -14,7 +14,7 @@ CFLAGS += \
 
 PROGNAME = mp3tofid
 PROGNAMESTATIC = $(PROGNAME).static
-LDLIBS   = -lpopt -lgdbm -lssl -lmad -lid3tag -lvorbisfile -lvorbis -logg -lsndfile -lFLAC -lz -lm #-lefence
+LDLIBS   = -lpopt -lgdbm -lcrypto -lmad -lid3tag -lvorbisfile -lvorbis -logg -lsndfile -lFLAC -lz -lm #-lefence
 LDFLAGS  = -g 
 LDFLAGSSTATIC  = $(LDFLAGS) -static
 OBJECTS  = $(PROGNAME).o scanmp3.o scanwave.o scanwma.o scanvorbis.o scanflac.o iconv.o

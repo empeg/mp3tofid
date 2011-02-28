@@ -70,6 +70,7 @@ struct progopts progopts =
 	1,		/* show statistics */
 	1,		/* show exclusions */
 	1,		/* show marks */
+	1,		/* index to main mp3 directory */
 };
 
 
@@ -200,6 +201,22 @@ ecalloc(size_t nmemb, size_t size)
 	{
 		fprintf(stderr, "%s: calloc(%lu, %lu) failed\n",
 			progopts.progname, nmemb, size);
+		exit(1);
+	}
+
+	return (memory);
+}
+
+/* allocate memory, print error and exit on failure */
+void *
+erealloc(void *ptr, size_t size)
+{
+	void	*memory;
+
+	if ((memory = realloc(ptr, size)) == NULL)
+	{
+		fprintf(stderr, "%s: realloc(ptr, %lu) failed\n",
+			progopts.progname, size);
 		exit(1);
 	}
 
@@ -856,7 +873,7 @@ checklink(char *linkpath)
 
 /* comparison routine for use with scandir(3) */
 int
-direntcompar(const void *a, const void *b)
+direntcompar(const struct dirent **a, const struct dirent **b)
 {
 	int			i, j;
 	int			offset[2];
@@ -894,14 +911,16 @@ direntcompar(const void *a, const void *b)
 
 /* recursively scan a directory for MP3's */
 int
-dirscan(const char *dir, unsigned int parentfidnumber, char *title)
+dirscan(const char **dirs, unsigned int parentfidnumber, char *title)
 {
-	int		i, j, n;
+	int		d, i, j, n;
+	int		totaln=0;
 	int		addfid;
-	FID		*fids;
+	FID		*fids = NULL;
 	int		nfids = 0;
 	int		includethis = 0;
 	char		*childpath;
+	const char	*childpaths[2];
 	unsigned int	fidnumber = 0;
 	struct dirent	**namelist;
 	struct stat	statbuf;
@@ -910,180 +929,191 @@ dirscan(const char *dir, unsigned int parentfidnumber, char *title)
 	char		tagvalue[MAXTAGLEN+1];
 	struct statex	**se;
 
-	/* show what's going on */
-	if (progopts.showscandir)
-		printf("scanning %s\n", dir);
-
-	/* count and sort directory entries */
-	if ((n = scandir(dir, &namelist, NULL, direntcompar)) < 0)
+	for (d=0; dirs[d]; d++)
 	{
+		/* show what's going on */
+		if (progopts.showscandir)
+			printf("scanning %s\n", dirs[d]);
 
-		fprintf(stderr, "%s: cannot scandir '%s': %s\n",
-				progopts.progname, dir, strerror(errno));
-		return (0);
-	}
-
-	/* allocate playlist */
-	fids = (FID *) ecalloc(n, sizeof(FID));
-
-	/* allocate array of file info */
-	se = ecalloc(n, sizeof(struct statex *));
-
-	/* first pass: check each directory entry */
-	for (i=0; i<n; i++)
-	{
-		if (namelist[i]->d_name == NULL)
-			continue;
-		if (strcmp(namelist[i]->d_name, ".")  == 0)
-			continue;
-		if (strcmp(namelist[i]->d_name, "..") == 0)
-			continue;
-
-		/* build full pathname to directory entry */
-		childpath = (char *) emalloc(strlen(dir) + reclen(namelist[i]) + 2);
-		sprintf(childpath, "%s/%s", dir, namelist[i]->d_name);
-
-		/* check this one isn't excluded, report later */
-		includethis = !checkexclude(childpath);
-
-		addfid = 0;
-		if (stat(childpath, &statbuf) == 0)
+		/* count and sort directory entries */
+		if ((n = scandir(dirs[d], &namelist, NULL, direntcompar)) < 0)
 		{
-			se[i] = emalloc(sizeof(struct statex));
-			se[i]->path  = childpath;
-			se[i]->dev   = statbuf.st_dev;
-			se[i]->ino   = statbuf.st_ino;
-			se[i]->size  = statbuf.st_size;
-			se[i]->mtime = statbuf.st_mtime;
-			se[i]->ctime = statbuf.st_ctime;
-			se[i]->codec = CODEC_NONE;
+			fprintf(stderr, "%s: cannot scandir '%s': %s\n",
+					progopts.progname, dirs[d], strerror(errno));
+			return (0);
+		}
+		totaln += n;
 
-			/* if it's a symlink, just add it to the playlist */
-			if (islink(childpath))
+		/* allocate playlist */
+		if (d == 0)
+			fids = (FID *) emalloc(n * sizeof(FID));
+		else
+			fids = (FID *) erealloc(fids, totaln * sizeof(FID));
+
+		/* allocate array of file info */
+		se = ecalloc(n, sizeof(struct statex *));
+
+		/* first pass: check each directory entry */
+		for (i=0; i<n; i++)
+		{
+			if (namelist[i]->d_name == NULL)
+				continue;
+			if (strcmp(namelist[i]->d_name, ".")  == 0)
+				continue;
+			if (strcmp(namelist[i]->d_name, "..") == 0)
+				continue;
+
+			/* build full pathname to directory entry */
+			childpath = (char *) emalloc(strlen(dirs[d]) + reclen(namelist[i]) + 2);
+			sprintf(childpath, "%s/%s", dirs[d], namelist[i]->d_name);
+
+			/* check this one isn't excluded, report later */
+			includethis = !checkexclude(childpath);
+
+			addfid = 0;
+			if (stat(childpath, &statbuf) == 0)
 			{
-				/* maybe ignore symlinks */
-				if (!progopts.ignoresymlinks)
+				se[i] = emalloc(sizeof(struct statex));
+				se[i]->path  = childpath;
+				se[i]->dev   = statbuf.st_dev;
+				se[i]->ino   = statbuf.st_ino;
+				se[i]->size  = statbuf.st_size;
+				se[i]->mtime = statbuf.st_mtime;
+				se[i]->ctime = statbuf.st_ctime;
+				se[i]->codec = CODEC_NONE;
+
+				/* if it's a symlink, just add it to the playlist */
+				if (islink(childpath))
+				{
+					/* maybe ignore symlinks */
+					if (!progopts.ignoresymlinks)
+					{
+						if (includethis)
+						{
+							addfid = checklink(childpath);
+							if (addfid)
+								fidnumber = sourcefiletofidnumber(se[i], 0);
+						}
+						else if (progopts.showexclusions)
+							printf("excluding link %s\n", childpath);
+					}
+				}
+				/* if it's a directory, recurse into it */
+				else if (S_ISDIR(statbuf.st_mode))
 				{
 					if (includethis)
 					{
-						addfid = checklink(childpath);
-						if (addfid)
-							fidnumber = sourcefiletofidnumber(se[i], 0);
+						fidnumber = sourcefiletofidnumber(se[i], 0);
+						childpaths[0] = childpath;
+						childpaths[1] = NULL;
+						if (dirscan(childpaths, fidnumber,
+								stripdirfrompath(childpath)))
+							addfid++;
+						else
+							releasefid(fidnumber);
 					}
 					else if (progopts.showexclusions)
-						printf("excluding link %s\n", childpath);
+						printf("excluding directory %s\n", childpath);
 				}
-			}
-			/* if it's a directory, recurse into it */
-			else if (S_ISDIR(statbuf.st_mode))
-			{
-				if (includethis)
+				/* windows shortcuts */
+				else if (!progopts.ignoreshortcuts && endswith(childpath, ".lnk"))
 				{
-					fidnumber = sourcefiletofidnumber(se[i], 0);
-					if (dirscan(childpath, fidnumber,
-							stripdirfrompath(childpath)))
-						addfid++;
-					else
-						releasefid(fidnumber);
+					/* TODO */
 				}
-				else if (progopts.showexclusions)
-					printf("excluding directory %s\n", childpath);
-			}
-			/* windows shortcuts */
-			else if (!progopts.ignoreshortcuts && endswith(childpath, ".lnk"))
-			{
-				/* TODO */
-			}
-			/* m3u playlists */
-			else if (!progopts.ignorem3u && endswith(childpath, ".m3u"))
-			{
-				/* TODO */
-			}
-			/* tunes */
-			else if (!progopts.ignoremp3  && endswith(childpath, ".mp2"))
-				se[i]->codec = CODEC_MP3;
-			else if (!progopts.ignoremp3  && endswith(childpath, ".mp3"))
-				se[i]->codec = CODEC_MP3;
-			else if (!progopts.ignoreogg  && endswith(childpath, ".ogg"))
-				se[i]->codec = CODEC_VORBIS;
-			else if (!progopts.ignorewav  && endswith(childpath, ".wav"))
-				se[i]->codec = CODEC_WAVE;
-			else if (!progopts.ignorewma  && endswith(childpath, ".wma"))
-				se[i]->codec = CODEC_WMA;
-			else if (!progopts.ignoreflac && endswith(childpath, ".flac"))
-				se[i]->codec = CODEC_FLAC;
-			else if (!progopts.ignoreflac && endswith(childpath, ".fla"))
-				se[i]->codec = CODEC_FLAC;
-		}
-		else
-			fprintf(stderr, "%s: can not stat '%s': %s\n",
-						progopts.progname, childpath, strerror(errno));
-
-		/* add passed directories and links */
-		if (addfid)
-			fids[nfids++] = makefid(fidnumber, FIDTYPE_TUNE);
-
-		/* remove excluded tunes */
-		if ((se[i]->codec != CODEC_NONE) && (!includethis))
-		{
-			free(se[i]);
-			se[i] = NULL;
-			if (progopts.showexclusions)
-				printf("excluding tune %s\n", childpath);
-		}
-	}
-
-	/* second pass: remove tunes with lesser codec weights */
-	for (i=0; progopts.preferredcodec && i<n; i++)
-	{
-		if (se[i] && (se[i]->codec != CODEC_NONE))
-		{
-			for (j=0; j<i; j++)
-			{
-				if (se[i] && se[j] && (se[j]->codec != CODEC_NONE) && (basenamecmp(se[i]->path, se[j]->path) == 0))
+				/* m3u playlists */
+				else if (!progopts.ignorem3u && endswith(childpath, ".m3u"))
 				{
-					if (codecweight[se[i]->codec] > codecweight[se[j]->codec])
-					{
-						free(se[j]);
-						se[j] = NULL;
-					}
-					else if (codecweight[se[i]->codec] < codecweight[se[j]->codec])
-					{
-						free(se[i]);
-						se[i] = NULL;
-					}
+					/* TODO */
 				}
+				/* tunes */
+				else if (!progopts.ignoremp3  && endswith(childpath, ".mp2"))
+					se[i]->codec = CODEC_MP3;
+				else if (!progopts.ignoremp3  && endswith(childpath, ".mp3"))
+					se[i]->codec = CODEC_MP3;
+				else if (!progopts.ignoreogg  && endswith(childpath, ".ogg"))
+					se[i]->codec = CODEC_VORBIS;
+				else if (!progopts.ignorewav  && endswith(childpath, ".wav"))
+					se[i]->codec = CODEC_WAVE;
+				else if (!progopts.ignorewma  && endswith(childpath, ".wma"))
+					se[i]->codec = CODEC_WMA;
+				else if (!progopts.ignoreflac && endswith(childpath, ".flac"))
+					se[i]->codec = CODEC_FLAC;
+				else if (!progopts.ignoreflac && endswith(childpath, ".fla"))
+					se[i]->codec = CODEC_FLAC;
 			}
-		}
-	}
+			else
+				fprintf(stderr, "%s: can not stat '%s': %s\n",
+							progopts.progname, childpath, strerror(errno));
 
-	/* third pass: add the remaining tunes */
-	for (i=0; i<n; i++)
-	{
-		if (se[i] && (se[i]->codec != CODEC_NONE))
-		{
-			fidnumber = sourcefiletofidnumber(se[i], 0);
-			tunescan(se[i], fidnumber);
-			if ((progopts.brokendrive2 == 0) ||
-					(fidnumbertodrive(fidnumber, TAG_TYPE_TUNE) == 0))
+			/* add passed directories and links */
+			if (addfid)
 				fids[nfids++] = makefid(fidnumber, FIDTYPE_TUNE);
-		}
-	}
 
-	/* fourth pass: free memory */
-	for (i=0; i<n; i++)
-	{
-		free(namelist[i]);
-		free(se[i]);
+			/* remove excluded tunes */
+			if ((se[i]->codec != CODEC_NONE) && (!includethis))
+			{
+				free(se[i]);
+				se[i] = NULL;
+				if (progopts.showexclusions)
+					printf("excluding tune %s\n", childpath);
+			}
+		}
+
+		/* second pass: remove tunes with lesser codec weights */
+		for (i=0; progopts.preferredcodec && i<n; i++)
+		{
+			if (se[i] && (se[i]->codec != CODEC_NONE))
+			{
+				for (j=0; j<i; j++)
+				{
+					if (se[i] && se[j] && (se[j]->codec != CODEC_NONE) && (basenamecmp(se[i]->path, se[j]->path) == 0))
+					{
+						if (codecweight[se[i]->codec] > codecweight[se[j]->codec])
+						{
+							free(se[j]);
+							se[j] = NULL;
+						}
+						else if (codecweight[se[i]->codec] < codecweight[se[j]->codec])
+						{
+							free(se[i]);
+							se[i] = NULL;
+						}
+					}
+				}
+			}
+		}
+
+		/* third pass: add the remaining tunes */
+		for (i=0; i<n; i++)
+		{
+			if (se[i] && (se[i]->codec != CODEC_NONE))
+			{
+				fidnumber = sourcefiletofidnumber(se[i], 0);
+				tunescan(se[i], fidnumber);
+				if ((progopts.brokendrive2 == 0) ||
+						(fidnumbertodrive(fidnumber, TAG_TYPE_TUNE) == 0))
+					fids[nfids++] = makefid(fidnumber, FIDTYPE_TUNE);
+			}
+		}
+
+		/* fourth pass: free memory */
+		for (i=0; i<n; i++)
+		{
+			free(namelist[i]);
+			free(se[i]);
+		}
+		free(namelist);
+		free(se);
 	}
-	free(namelist);
-	free(se);
 
 	/* warn about empty directories */
 	if (nfids == 0)
 	{
-		fprintf(stderr, "%s: nothing found in directory %s\n",
-				progopts.progname, dir);
+		fprintf(stderr, "%s: nothing found in directory %s",
+				progopts.progname, dirs[0]);
+		for (d=1; dirs[d]; d++)
+			fprintf(stderr, " and %s", dirs[d]);
+		fprintf(stderr, "\n");
 		return nfids;
 	}
 
@@ -1100,8 +1130,8 @@ dirscan(const char *dir, unsigned int parentfidnumber, char *title)
 	/* fill the allocated data */
 	tagvalues[TAG_TYPE_NUM]     = "playlist";
 	tagvalues[TAG_TITLE_NUM]    = titlefromfilename(title, 0);
-	tagvalues[TAG_LOADFROM_NUM] = strdup(dir);
-	stat(dir, &statbuf);
+	tagvalues[TAG_LOADFROM_NUM] = strdup(dirs[0]);
+	stat(dirs[0], &statbuf);
 	sprintf(tagvalue, "%lu", statbuf.st_ctime);
 	tagvalues[TAG_CTIME_NUM]    = strdup(tagvalue);
 	sprintf(tagvalue, "%d", (int)(nfids * sizeof(FID)));
@@ -1353,7 +1383,7 @@ void
 mksubdirs()
 {
 	if (progopts.showstages)
-		puts("creating directories");
+		printf("creating subdirectories under %s\n", progopts.fiddir);
 	mksubdir("drive0");
 	mksubdir("drive1");
 	mksubdir("drive0/fids");
@@ -1497,7 +1527,7 @@ savefids()
 
 	/* count fids */
 	for (fidinfo = fihead; fidinfo && fidinfo->ntagvalues; fidinfo = fidinfo->next)
-	nfids++;
+		nfids++;
 
 	/* allocate an array for them */
 	fidinfoarray = (struct fidinfo **) ecalloc(nfids, sizeof(struct fidinfo *));
@@ -1652,8 +1682,13 @@ getmp3stdev(const char *dir)
 {
 	struct stat	statbuf;
 
-	if (stat(dir, &statbuf) == 0)
-		mp3stdev = statbuf.st_dev;
+	if (stat(dir, &statbuf) != 0)
+	{
+		fprintf(stderr, "%s: can not stat '%s': %s\n",
+				progopts.progname, dir, strerror(errno));
+		exit(1);
+	}
+	mp3stdev = statbuf.st_dev;
 }
 
 /* scan mp3 tree */
@@ -1662,7 +1697,7 @@ scanfids()
 {
 	if (progopts.showstages)
 		puts("scanning MP3 directories");
-	dirscan(progopts.mp3dir, getfidnumber(FID_ROOTPLAYLIST) , "All Music");
+	dirscan(progopts.mp3dirs, getfidnumber(FID_ROOTPLAYLIST) , "All Music");
 }
 
 /* load the inode-to-fid database */
@@ -1914,6 +1949,10 @@ popt(const int argc, const char **argv)
 				'\0', "filesystem character encoding", "codeset-name"},
 		{"database-codeset",	'\0', POPT_ARG_STRING, &progopts.dbcodeset,
 				'\0', "database character encoding", "codeset-name"},
+		{"fids-directory",	'f',  POPT_ARG_STRING, &progopts.fiddir,
+				'f', "fids output", "directory"},
+		{"main-mp3-dir-index",	0,   POPT_ARG_INT,  &progopts.mainmp3diridx,
+				 0,   "index to main mp3 directory", "number"},
 		POPT_AUTOHELP
 		POPT_TABLEEND
 	};
@@ -1926,7 +1965,7 @@ popt(const int argc, const char **argv)
 		progopts.progname++;
 
 	optCon = poptGetContext(NULL, argc, argv, optionsTable, 0);
-	poptSetOtherOptionHelp(optCon, "[options] <mp3 base directory> <fid base directory>");
+	poptSetOtherOptionHelp(optCon, "[options] <mp3 base directories>");
 
 	/* special options processing */
 	while ((c = poptGetNextOpt(optCon)) >= 0)
@@ -2003,6 +2042,11 @@ popt(const int argc, const char **argv)
 		break;
 	}
 
+	/* get remainder of arguments as mp3 dirs */
+	progopts.mp3dirs = poptGetArgs(optCon);
+	if (progopts.mp3dirs == NULL || progopts.mp3dirs[0] == NULL)
+		usage(optCon, "need at least one non-option argument");
+
 	if ((progopts.dbcodeset != NULL) && (strcasecmp(progopts.internalcodeset, "utf-8") == 0))
 		usage(optCon, "local database encoding not possible when using utf-8 internally");
 
@@ -2012,16 +2056,10 @@ popt(const int argc, const char **argv)
 	if ((progopts.drive2perc > 100) || (progopts.drive2perc < 0))
 		usage(optCon, "percentage must be between 0 and 100");
 
-	if ((progopts.mp3dir = poptGetArg(optCon)) == NULL)
-		usage(optCon, "no arguments given");
+	if (progopts.fiddir == NULL)
+		usage(optCon, "no fids-directory given");
 
-	if ((progopts.fiddir = poptGetArg(optCon)) == NULL)
-		usage(optCon, "not enough arguments");
-
-	if (poptGetArg(optCon))
-		usage(optCon, "too many arguments");
-
-	poptFreeContext(optCon);
+	/* poptFreeContext(optCon); */
 }
 
 /* main routine */
@@ -2029,7 +2067,7 @@ int
 main(const int argc, const char **argv)
 {
 	popt(argc, argv);
-	getmp3stdev(progopts.mp3dir);
+	getmp3stdev(progopts.mp3dirs[progopts.mainmp3diridx-1]);
 	initdata();
 	mksubdirs();
 	loaddb();
