@@ -1,4 +1,25 @@
+#if HAVE_BYTESWAP_H
 #include <byteswap.h>
+#elif defined(USE_SYS_ENDIAN_H)
+#include <sys/endian.h>
+#elif defined(__APPLE__)
+#include <libkern/OSByteOrder.h>
+#define bswap_16 OSSwapInt16
+#define bswap_32 OSSwapInt32
+#define bswap_64 OSSwapInt64
+#else
+#definebswap_16(value)  \
+  ((((value) & 0xff) << 8) | ((value) >> 8))
+
+#definebswap_32(value)\
+  (((uint32_t)bswap_16((uint16_t)((value) & 0xffff)) << 16) | \
+   (uint32_t)bswap_16((uint16_t)((value) >> 16)))
+ 
+#definebswap_64(value)\
+  (((uint64_t)bswap_32((uint32_t)((value) & 0xffffffff)) \
+    << 32) | \
+   (uint64_t)bswap_32((uint32_t)((value) >> 32)))
+#endif
 #include "config.h"
 
 /*

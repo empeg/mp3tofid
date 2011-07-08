@@ -126,6 +126,10 @@ struct relist
 	struct relist	*next;
 };
 
+#ifdef __APPLE__
+#define ino_t int
+#endif
+
 /* stat extra */
 struct statex
 {
