@@ -195,4 +195,6 @@ struct progopts
 	int		showexclusions;		/* show exclusions */
 	int		showmarks;		/* show marks */
 	int		mainmp3diridx;		/* index to main mp3 directory */
+	char            *jemplodecsv;           /* jemplode CSV filename */
+	char            *jemplodexml;           /* jemplode XML filename */
 };

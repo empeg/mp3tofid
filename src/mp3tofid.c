@@ -71,6 +71,8 @@ struct progopts progopts =
 	1,		/* show exclusions */
 	1,		/* show marks */
 	1,		/* index to main mp3 directory */
+	NULL,           /* jemplode CSV filename */
+	NULL,           /* jemplode XML filename */
 };
 
 
@@ -1505,6 +1507,8 @@ savefids()
 	FILE		*fpfids;
 	FILE		*fpdatabase;
 	FILE		*fpplaylists;
+	FILE		*fpcsv;
+	FILE		*fpxml;
 	char		path[PATH_MAX];
 	char		*fidpath;
 
@@ -1674,6 +1678,83 @@ savefids()
 	/* close database files */
 	fclose(fpdatabase);
 	fclose(fpplaylists);
+
+	if (progopts.jemplodexml) {
+		/* show what's going on */
+		printf("writing jEmplode XML file %s\n", progopts.jemplodexml);
+		fpxml  = efopen(progopts.jemplodexml, "w");
+		fclose(fpxml);
+	}
+	/* show what's going on */
+	if (progopts.jemplodecsv) {
+		/* show what's going on */
+		printf("writing jEmplode CSV file %s\n", progopts.jemplodecsv);
+		fpcsv  = efopen(progopts.jemplodecsv, "w");
+		fprintf(fpcsv, "\"fid\",\"type\",\"length\",\"title\",\"artist\",\"bitrate\",\"codec\",\"duration\",\"genre\",\"offset\",\"samplerate\",\"source\",\"tracknr\",\"year\",\"comment\",\"refs\",\"contents\"\n");
+		/* save all fids */
+		for (i=0; i<nfids; i++)
+		{
+			fidinfo = fidinfoarray[i];
+			fprintf(fpcsv, "%d,\"%s\",", fidinfo->fidnumber,
+				(fidinfo->tagtype==TAG_TYPE_TUNE)?"tune":
+				"playlist");
+			fprintf(fpcsv, "\"%s\",",
+				fidinfo->tagvalues[TAG_LENGTH_NUM]?
+				fidinfo->tagvalues[TAG_LENGTH_NUM]:"");
+			fprintf(fpcsv, "\"%s\",",
+				fidinfo->tagvalues[TAG_TITLE_NUM]?
+				fidinfo->tagvalues[TAG_TITLE_NUM]:"");
+			fprintf(fpcsv, "\"%s\",",
+				fidinfo->tagvalues[TAG_ARTIST_NUM]?
+				fidinfo->tagvalues[TAG_ARTIST_NUM]:"");
+			fprintf(fpcsv, "\"%s\",",
+				fidinfo->tagvalues[TAG_BITRATE_NUM]?
+				fidinfo->tagvalues[TAG_BITRATE_NUM]:"");
+			fprintf(fpcsv, "\"%s\",",
+				fidinfo->tagvalues[TAG_CODEC_NUM]?
+				fidinfo->tagvalues[TAG_CODEC_NUM]:"");
+			fprintf(fpcsv, "\"%s\",",
+				fidinfo->tagvalues[TAG_DURATION_NUM]?
+				fidinfo->tagvalues[TAG_DURATION_NUM]:"");
+			fprintf(fpcsv, "\"%s\",",
+				fidinfo->tagvalues[TAG_GENRE_NUM]?
+				fidinfo->tagvalues[TAG_GENRE_NUM]:"");
+			fprintf(fpcsv, "\"%s\",",
+				fidinfo->tagvalues[TAG_OFFSET_NUM]?
+				fidinfo->tagvalues[TAG_OFFSET_NUM]:"");
+			fprintf(fpcsv, "\"%s\",",
+				fidinfo->tagvalues[TAG_SAMPLERATE_NUM]?
+				fidinfo->tagvalues[TAG_SAMPLERATE_NUM]:"");
+			fprintf(fpcsv, "\"%s\",",
+				fidinfo->tagvalues[TAG_SOURCE_NUM]?
+				fidinfo->tagvalues[TAG_SOURCE_NUM]:"");
+			fprintf(fpcsv, "\"%s\",",
+				fidinfo->tagvalues[TAG_TRACKNR_NUM]?
+				fidinfo->tagvalues[TAG_TRACKNR_NUM]:"");
+			fprintf(fpcsv, "\"%s\",",
+				fidinfo->tagvalues[TAG_YEAR_NUM]?
+				fidinfo->tagvalues[TAG_YEAR_NUM]:"");
+			fprintf(fpcsv, "\"%s\",",
+				fidinfo->tagvalues[TAG_COMMENT_NUM]?
+				fidinfo->tagvalues[TAG_COMMENT_NUM]:"");
+			fprintf(fpcsv, "%d,\",\"", 1); /* refs XXX */
+			if (fidinfo->tagtype == TAG_TYPE_PLAYLIST)
+			{
+				for (j=0; j<fidinfo->pllength; j++)
+				{
+					fid = getfidnumber(fidinfo->playlist[j]);
+					if (j < (fidinfo->pllength-1))
+						fprintf(fpcsv, "%d,", fid);
+					else
+						fprintf(fpcsv, "%d", fid);
+				}
+
+			}
+			fprintf(fpcsv, "\"\n");
+		}
+		fclose(fpcsv);
+	}
+	free(fidinfoarray);
 }
 
 /* get major and minor number of root of mp3 tree */
@@ -1953,6 +2034,10 @@ popt(const int argc, const char **argv)
 				'f', "fids output", "directory"},
 		{"main-mp3-dir-index",	0,   POPT_ARG_INT,  &progopts.mainmp3diridx,
 				 0,   "index to main mp3 directory", "number"},
+		{"jemplode-csv-filename", 0,   POPT_ARG_STRING, &progopts.jemplodecsv,
+				 0,   "player database name", "name"},
+		{"jemplode-xml-filename", 0,   POPT_ARG_STRING, &progopts.jemplodexml,
+				 0,   "player database name", "name"},
 		POPT_AUTOHELP
 		POPT_TABLEEND
 	};
