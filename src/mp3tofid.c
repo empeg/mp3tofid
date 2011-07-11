@@ -1683,6 +1683,44 @@ savefids()
 		/* show what's going on */
 		printf("writing jEmplode XML file %s\n", progopts.jemplodexml);
 		fpxml  = efopen(progopts.jemplodexml, "w");
+		fprintf(fpxml, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>\n<!DOCTYPE player [\n\n<!ELEMENT player (playlist|tune)* >\n<!ATTLIST  player\n\tname       CDATA   #IMPLIED  >\n\n<!ELEMENT  playlist (attribute*) >\n<!ATTLIST  playlist\n\tid         ID      #REQUIRED\n\tcontent    IDREFS  #IMPLIED  >\n\n<!ELEMENT  tune (attribute*) >\n<!ATTLIST  tune\n\tid         ID      #REQUIRED >\n\n<!ELEMENT  attribute (#PCDATA) >\n<!ATTLIST  attribute\n\tname       CDATA   #REQUIRED >\n\n<!ENTITY lt     \"&#38;#60;\">\n<!ENTITY gt     \"&#62;\">\n<!ENTITY amp    \"&#38;#38;\">\n<!ENTITY apos   \"&#39;\">\n<!ENTITY quot   \"&#34;\">\n\n]>\n\n\n");
+		/* XXX replace with config.ini parser? */
+		fprintf(fpxml, "<player name=\"%s\">\n", "Car Player");
+		/* save all fids */
+                for (i=0; i<nfids; i++)
+                {
+			fidinfo = fidinfoarray[i];
+			if (fidinfo->tagtype==TAG_TYPE_PLAYLIST) {
+				fprintf(fpxml, "\t<playlist id=\"x%x0\" content=\"",
+					fidinfo->fidnumber);
+				for (j=0; j<fidinfo->pllength; j++)
+                                {
+                                        fid = getfidnumber(fidinfo->playlist[j]);
+                                        if (j < (fidinfo->pllength-1))
+                                                fprintf(fpxml, "x%x0 ", fid);
+                                        else
+                                                fprintf(fpxml, "x%x0", fid);
+                                }
+				fprintf(fpxml, "\">\n");
+			} else
+				fprintf(fpxml, "\t<tune id=\"x%x0\">\n",
+					fidinfo->fidnumber);
+			for (j = TAG_ARTIST_NUM; j <= TAG_YEAR_NUM; j++) {
+				if ((j == TAG_LOADFROM_NUM) ||
+				    (j == TAG_TYPE_NUM) ||
+				    (j == TAG_COMMENT_NUM) ||
+				    (j == TAG_FILE_ID_NUM) ||
+				    (j == TAG_RID_NUM))
+					continue;
+				if (fidinfo->tagvalues[j])
+					fprintf(fpxml, "\t\t<attribute name=\"%s\">%s</attribute>\n", tagprops[j].name, fidinfo->tagvalues[j]);
+			}
+			if (fidinfo->tagtype==TAG_TYPE_PLAYLIST)
+				fprintf(fpxml, "\t</playlist>\n");
+			else
+				fprintf(fpxml, "\t</tune>\n");
+		}
+		fprintf(fpxml, "</player>\n");
 		fclose(fpxml);
 	}
 	/* show what's going on */
